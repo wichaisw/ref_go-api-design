@@ -16,6 +16,9 @@ type User struct {
 	Name string `json:"nickname"`
 	Age  int    `json:"age"`
 }
+type Err struct {
+	Message string `json:"message"`
+}
 
 func healthHandler(c echo.Context) error {
 	return c.JSON(http.StatusOK, "OK")
@@ -24,7 +27,7 @@ func healthHandler(c echo.Context) error {
 func getUsersHandler(c echo.Context) error {
 	stmt, err := db.Prepare("SELECT id, name, age FROM users")
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, Err{Message: "can't prepare query all users statement"})
+		return c.JSON(http.StatusInternalServerError, Err{Message: "can't prepare query all users statement" + err.Error()})
 	}
 
 	rows, err := stmt.Query()
@@ -46,8 +49,27 @@ func getUsersHandler(c echo.Context) error {
 	return c.JSON(http.StatusOK, users)
 }
 
-type Err struct {
-	Message string `json:"message"`
+func getUserHandler(c echo.Context) error {
+	id := c.Param("id")
+	stmt, err := db.Prepare("SELECT id, name, age FROM users WHERE id =$1")
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, Err{Message: "can't prepare query user by id statement" + err.Error()})
+	}
+
+	row := stmt.QueryRow(id)
+	u := User{}
+	err = row.Scan(&u.Id, &u.Name, &u.Age)
+	switch err {
+	case sql.ErrNoRows:
+		return c.JSON(http.StatusNotFound, Err{Message: "user not found"})
+	case nil:
+		return c.JSON(http.StatusOK, u)
+	default:
+		return c.JSON(http.StatusInternalServerError, Err{Message: "can't scan user: " + err.Error()})
+	}
+
+	return c.JSON(http.StatusOK, u)
+
 }
 
 func createUsersHandler(c echo.Context) error {
@@ -85,8 +107,7 @@ func main() {
 
 	e.GET("/health", healthHandler)
 
-	g := e.Group("/api")
-	g.Use(middleware.BasicAuth(func(username, password string, c echo.Context) (bool, error) {
+	e.Use(middleware.BasicAuth(func(username, password string, c echo.Context) (bool, error) {
 		if username == "apidemo" && password == "34567" {
 			return true, nil
 		}
@@ -94,8 +115,9 @@ func main() {
 		return false, nil
 	}))
 
-	g.GET("/users", getUsersHandler)
-	g.POST("/users", createUsersHandler)
+	e.GET("/users", getUsersHandler)
+	e.GET("/users/:id", getUserHandler)
+	e.POST("/users", createUsersHandler)
 
 	log.Println("Server started at :2565")
 	// log.Fatal(http.ListenAndServe(":2565", mux))
